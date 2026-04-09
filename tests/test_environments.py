@@ -39,7 +39,7 @@ class TestSHADEArenaEnvironment:
         assert isinstance(env.tool_config, str)  # JSON string for GPT
 
     def test_init_bedrock(self, env_name):
-        env = self._make_env("claude-3-sonnet", env_name)
+        env = self._make_env("us.anthropic.claude-3-sonnet-20240229-v1:0", env_name)
         assert isinstance(env.tool_config, dict)
         assert "tools" in env.tool_config
 
@@ -65,7 +65,7 @@ class TestSHADEArenaEnvironment:
             assert "description" in tool["function"]
 
     def test_tool_config_bedrock_has_toolspec(self, env_name):
-        env = self._make_env("claude-3-sonnet", env_name)
+        env = self._make_env("us.anthropic.claude-3-sonnet-20240229-v1:0", env_name)
         for tool in env.tool_config["tools"]:
             assert "toolSpec" in tool
             spec = tool["toolSpec"]
@@ -103,7 +103,7 @@ class TestSHADEArenaEnvironment:
         assert "doesn't exist" in result[0]["content"]
 
     def test_step_nonexistent_tool_bedrock(self, env_name):
-        env = self._make_env("claude-3-sonnet", env_name)
+        env = self._make_env("us.anthropic.claude-3-sonnet-20240229-v1:0", env_name)
         completion = {
             "tool_call_id": "tc_test",
             "tool_name": "nonexistent_tool_xyz",
@@ -145,7 +145,7 @@ class TestSHADEArenaEnvironment:
         assert isinstance(msg["content"], str)
 
     def test_step_bedrock_format(self, env_name):
-        env = self._make_env("claude-3-sonnet", env_name)
+        env = self._make_env("us.anthropic.claude-3-sonnet-20240229-v1:0", env_name)
         completion = {
             "tool_call_id": "tc_test",
             "tool_name": "nonexistent_tool_xyz",
@@ -188,7 +188,7 @@ class TestAgentSafetyBenchEnvironment:
         assert len(env.envs) > 0
 
     def test_init_bedrock(self, sample_asb_data):
-        env = self._make_env(sample_asb_data, "claude-3-sonnet")
+        env = self._make_env(sample_asb_data, "us.anthropic.claude-3-sonnet-20240229-v1:0")
         assert isinstance(env.tool_config, dict)
         assert "tools" in env.tool_config
 
@@ -212,7 +212,7 @@ class TestAgentSafetyBenchEnvironment:
         assert len(env.tool_config) > 0
 
     def test_get_tool_info_bedrock(self, sample_asb_data):
-        env = self._make_env(sample_asb_data, "claude-3-sonnet")
+        env = self._make_env(sample_asb_data, "us.anthropic.claude-3-sonnet-20240229-v1:0")
         tool_info = env.get_tool_info()
         if tool_info is not None:
             parsed = json.loads(tool_info)
@@ -234,7 +234,7 @@ class TestAgentSafetyBenchEnvironment:
         assert isinstance(content, str)
 
     def test_step_nonexistent_tool_bedrock(self, sample_asb_data):
-        env = self._make_env(sample_asb_data, "claude-3-sonnet")
+        env = self._make_env(sample_asb_data, "us.anthropic.claude-3-sonnet-20240229-v1:0")
         completion = {
             "tool_call_id": "tc_test",
             "tool_name": "totally_fake_tool",

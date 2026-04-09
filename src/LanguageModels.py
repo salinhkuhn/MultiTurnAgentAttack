@@ -724,6 +724,141 @@ class VllmLM(LM):
         return outputs
     
     
+class AnthropicLM(LM):
+    """
+    Anthropic API language model implementation.
+
+    Uses the Anthropic SDK directly (not via AWS Bedrock) for Claude models.
+    Model IDs should use Anthropic's naming: claude-sonnet-4-6, claude-opus-4-6, etc.
+    """
+
+    def __init__(self, model_id: str, sys_prompt_paths: List[str] = None) -> None:
+        super().__init__(model_id, sys_prompt_paths)
+
+    def load_model(self) -> Any:
+        import anthropic
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key is None:
+            raise ValueError(
+                "ANTHROPIC_API_KEY environment variable is not set. "
+                "Please set it with: export ANTHROPIC_API_KEY='your-key-here'"
+            )
+        return anthropic.Anthropic(api_key=api_key)
+
+    def format_prompts(self, user_prompts: List, add_sys_prompt: bool = True) -> List:
+        """Format user prompts for Anthropic API. System prompt is passed separately."""
+        formatted_prompts = []
+        for user_prompt in user_prompts:
+            if not user_prompt:
+                formatted_prompts.append(None)
+            elif isinstance(user_prompt, str):
+                formatted_prompts.append([{"role": "user", "content": user_prompt}])
+            elif isinstance(user_prompt, list):
+                formatted_prompts.append(deepcopy(user_prompt))
+        return formatted_prompts
+
+    def convert_messages_format(self, all_messages):
+        """Convert OpenAI-style messages to Anthropic format."""
+        all_converted = []
+        for messages in all_messages:
+            converted = []
+            for msg in messages:
+                if msg['role'] == 'system':
+                    continue  # System prompt handled separately
+                elif msg['role'] == 'assistant':
+                    content_blocks = []
+                    if 'content' in msg and msg['content']:
+                        if isinstance(msg['content'], list):
+                            content_blocks = msg['content']
+                        else:
+                            content_blocks = [{"type": "text", "text": msg['content']}]
+                    if 'tool_calls' in msg:
+                        for tc in msg['tool_calls']:
+                            content_blocks.append({
+                                "type": "tool_use",
+                                "id": tc['id'],
+                                "name": tc['function']['name'],
+                                "input": json_repair.loads(tc['function']['arguments'])
+                            })
+                    converted.append({"role": "assistant", "content": content_blocks})
+                elif msg['role'] == 'tool':
+                    converted.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": msg.get('tool_call_id', 'unknown'),
+                            "content": msg.get('content', '')
+                        }]
+                    })
+                else:
+                    converted.append({"role": msg['role'], "content": msg.get('content', '')})
+            all_converted.append(converted)
+        return all_converted
+
+    def generate(self,
+                 user_prompts: List[str],
+                 temperature: float = 1.0,
+                 top_p: float = 0.9,
+                 max_tokens: Optional[int] = None,
+                 tool_configs: List = None,
+                 format_user_prompts: bool = True,
+                 return_raw_output: bool = False,
+                 role: str = '',
+                 batch_size: Optional[int] = None) -> List[str]:
+        import anthropic
+
+        formatted_prompts = self.format_prompts(user_prompts) if format_user_prompts else user_prompts
+        outputs = []
+
+        prompts_iterable = tqdm(formatted_prompts, desc=role) if role else formatted_prompts
+        for i, prompt in enumerate(prompts_iterable):
+            logging.info(f"\n\n[USER PROMPT {i+1}]: {prompt}")
+            tool_config = tool_configs[i] if tool_configs and i < len(tool_configs) else None
+
+            success = False
+            while not success:
+                try:
+                    kwargs = {
+                        "model": self.model_id,
+                        "messages": prompt,
+                        "max_tokens": max_tokens or 4096,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                    }
+                    if self.sys_prompt:
+                        kwargs["system"] = self.sys_prompt
+                    if tool_config:
+                        kwargs["tools"] = tool_config
+
+                    response = self.model.messages.create(**kwargs)
+
+                    if return_raw_output:
+                        # Convert to dict format for Agent.step()
+                        result = {"role": "assistant", "content": []}
+                        for block in response.content:
+                            if block.type == "text":
+                                result["content"].append({"type": "text", "text": block.text})
+                            elif block.type == "tool_use":
+                                result["content"].append({
+                                    "type": "tool_use",
+                                    "id": block.id,
+                                    "name": block.name,
+                                    "input": block.input
+                                })
+                        outputs.append(result)
+                    else:
+                        text_parts = [b.text for b in response.content if b.type == "text"]
+                        outputs.append("".join(text_parts) if text_parts else "")
+
+                    logging.info(f"\n\n[OUTPUT]: {outputs[-1]}")
+                    success = True
+                except anthropic.APIError as e:
+                    print(f"ERROR: Anthropic API error for '{self.model_id}': {e}. Retrying in 60s...")
+                    time.sleep(60)
+
+        return outputs
+
+
 class OpenAILM(LM):
     def __init__(self, model_id, sys_prompt_paths = None):
         super().__init__(model_id, sys_prompt_paths)

@@ -9,7 +9,7 @@ import numpy as np
 from tqdm import trange
 import ray
 
-from src.LanguageModels import BedrockLM, VllmLM, OpenAILM
+from src.LanguageModels import BedrockLM, VllmLM, OpenAILM, AnthropicLM
 from src.Environments import BaseEnvironment
 from src.Agents import Agent
 from src.utils import str2json, ensure_ray_initialized
@@ -77,7 +77,9 @@ class BaseLM:
         self.sys_prompt_path = sys_prompt_path
         self.load_sys_prompt()
         
-        if 'claude' in model_id.lower() or 'llama' in model_id.lower() or 'deepseek' in model_id.lower():
+        if model_id.lower().startswith('claude'):
+            self.model = AnthropicLM(model_id, sys_prompt_paths=[sys_prompt_path])
+        elif 'claude' in model_id.lower() or 'llama' in model_id.lower() or 'deepseek' in model_id.lower():
             self.model = BedrockLM(model_id, sys_prompt_paths=[sys_prompt_path], region=region)
         elif 'gpt' in model_id.lower() or 'o3' in model_id.lower() or 'o4' in model_id.lower():
             self.model = OpenAILM(model_id=model_id, sys_prompt_paths=[sys_prompt_path])

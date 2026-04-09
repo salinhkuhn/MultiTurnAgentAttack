@@ -152,7 +152,28 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
         if self.allow_all_tools:
             for env in self.envs:
                 tools_list += get_class_tool_infos(env)
-            if 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower():
+            if self.model_id.lower().startswith('claude'):
+                # Anthropic API format
+                self.tool_config = []
+                tool_names = []
+                for tool in tools_list:
+                    name = tool['function']['name'] if 'function' in tool else tool.get('toolSpec', {}).get('name', '')
+                    if name in tool_names:
+                        continue
+                    tool_names.append(name)
+                    if 'function' in tool:
+                        self.tool_config.append({
+                            'name': tool['function']['name'],
+                            'description': tool['function']['description'],
+                            'input_schema': tool['function']['parameters']
+                        })
+                    elif 'toolSpec' in tool:
+                        self.tool_config.append({
+                            'name': tool['toolSpec']['name'],
+                            'description': tool['toolSpec']['description'],
+                            'input_schema': tool['toolSpec']['inputSchema']['json']
+                        })
+            elif 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower():
                 self.tool_config = []
                 tool_names = []
                 for tool in tools_list:
@@ -165,7 +186,7 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
                             tool_names.append(tool['function']['name'])
                         self.tool_config.append(
                                 {
-                                    'toolSpec': 
+                                    'toolSpec':
                                         {
                                             'name': tool['function']['name'],
                                             'description': tool['function']['description'],
@@ -179,7 +200,19 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
             else:
                 self.tool_config = json.dumps(tools_list)
         else:
-            if 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower():
+            if self.model_id.lower().startswith('claude'):
+                # Anthropic API format
+                for tool_desc in tool_descs:
+                    tool_info = tool_desc[tool_desc['type']]
+                    tools_list.append({
+                        'name': tool_info['name'],
+                        'description': tool_info['description'],
+                        'input_schema': tool_info['parameters']
+                    })
+                self.tool_config = tools_list if len(tool_descs) > 0 else None
+
+            elif 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower():
+                # Bedrock format
                 for tool_desc in tool_descs:
                     tool_info = tool_desc[tool_desc['type']]
                     name = tool_info['name']
@@ -187,7 +220,7 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
                     parameters = tool_info['parameters']
                     tools_list.append(
                         {
-                            'toolSpec': 
+                            'toolSpec':
                                 {
                                     'name': name,
                                     'description': description,
@@ -197,9 +230,8 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
                                 }
                         }
                     )
-                    
                 self.tool_config = {'tools': tools_list} if len(tool_descs) > 0 else None
-                
+
             elif 'gpt' in self.model_id.lower() or 'o3' in self.model_id.lower() or 'o4' in self.model_id.lower():
                 for item in tool_descs:
                     item['type'] = "object"
@@ -314,7 +346,17 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
                     }
                 }
         
-        if 'claude' in self.model_id.lower() or 'deepseek' in self.model_id.lower() or 'llama' in self.model_id.lower():
+        if self.model_id.lower().startswith('claude'):
+            # Anthropic API: tool results are user messages with tool_result blocks
+            tool_call_result_message = [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": tool_result['toolResult']['content'][0]['text']
+                }]
+            }]
+        elif 'claude' in self.model_id.lower() or 'deepseek' in self.model_id.lower() or 'llama' in self.model_id.lower():
             tool_call_result_message = [{
                 "role": "tool",
                 "content": [tool_result]
@@ -326,9 +368,9 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
                 "name": tool_name,
                 "content": tool_result['toolResult']['content'][0]['text']
             }]
-            
+
         return tool_call_result_message
-    
+
 
 class SHADEArenaEnvironment(BaseEnvironment):
     """
@@ -434,7 +476,18 @@ class SHADEArenaEnvironment(BaseEnvironment):
                 if param.default is inspect.Parameter.empty and not is_optional:
                     required.append(param_name)
 
-            if 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower() or 'deepseek' in self.model_id.lower():
+            if self.model_id.lower().startswith('claude'):
+                # Anthropic API format
+                tool_list.append({
+                    "name": name,
+                    "description": description,
+                    "input_schema": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    }
+                })
+            elif 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower() or 'deepseek' in self.model_id.lower():
                 tool_list.append({
                     "toolSpec": {
                         "name": name,
@@ -466,9 +519,11 @@ class SHADEArenaEnvironment(BaseEnvironment):
                         'parameters': properties
                     }
                 tool_list.append(tool_info)
-                
-                
-        if 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower() or 'deepseek' in self.model_id.lower():
+
+
+        if self.model_id.lower().startswith('claude'):
+            self.tool_config = tool_list  # Anthropic: plain list
+        elif 'claude' in self.model_id.lower() or 'llama' in self.model_id.lower() or 'deepseek' in self.model_id.lower():
             self.tool_config = {"tools": tool_list}
         else:
             self.tool_config = json.dumps(tool_list) # str
@@ -550,7 +605,17 @@ class SHADEArenaEnvironment(BaseEnvironment):
                         }
                     }
 
-        if 'claude' in self.model_id.lower() or 'deepseek' in self.model_id.lower() or 'llama' in self.model_id.lower():
+        if self.model_id.lower().startswith('claude'):
+            # Anthropic API: tool results are user messages with tool_result blocks
+            tool_call_result_message = [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": tool_result['toolResult']['content'][0]['text']
+                }]
+            }]
+        elif 'claude' in self.model_id.lower() or 'deepseek' in self.model_id.lower() or 'llama' in self.model_id.lower():
             tool_call_result_message = [{
                 "role": "tool",
                 "content": [tool_result]

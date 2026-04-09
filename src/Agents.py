@@ -9,7 +9,7 @@ import json_repair
 import ray
 
 from src.Environments import BaseEnvironment
-from src.LanguageModels import BedrockLM, VllmLM, OpenAILM
+from src.LanguageModels import BedrockLM, VllmLM, OpenAILM, AnthropicLM
 from src.utils import str2json, gen_tool_call_id, ensure_ray_initialized
 
 
@@ -75,7 +75,9 @@ class Agent():
         if model:
             self.model = model
         else:
-            if 'claude' in model_id.lower() or 'llama' in model_id.lower() or 'deepseek' in model_id.lower():
+            if model_id.lower().startswith('claude'):
+                self.model = AnthropicLM(model_id, sys_prompt_paths=[sys_prompt_path])
+            elif 'claude' in model_id.lower() or 'llama' in model_id.lower() or 'deepseek' in model_id.lower():
                 self.model = BedrockLM(model_id, sys_prompt_paths=[sys_prompt_path], region=region)
             elif 'gpt' in model_id.lower() or 'o3' in model_id.lower() or 'o4' in model_id.lower():
                 self.model = OpenAILM(model_id, sys_prompt_paths=[sys_prompt_path])
@@ -352,6 +354,60 @@ class Agent():
                         for i in range(len(all_env_messages)-1):
                             env_messages['content'].extend(all_env_messages[i+1]['content'])
                     self.messages[agent_idx].append(env_messages)
+
+        elif isinstance(self.model, AnthropicLM):
+            self.model.set_sys_prompt(self.sys_prompt)
+            prev_running = np.where(self.running)[0]
+            for agent_i in range(self.n_agents):
+                formatted_user_prompts = self.model.format_prompts(user_prompts)
+                if user_prompts[agent_i]:
+                    self.messages[agent_i].extend(formatted_user_prompts[agent_i])
+            all_completion_raw = self.model.generate(
+                [m for i, m in enumerate(self.messages) if self.running[i]],
+                temperature=self.temperature,
+                top_p=self.top_p,
+                max_tokens=self.max_tokens,
+                tool_configs=[t for i, t in enumerate(self.tool_configs) if self.running[i]],
+                format_user_prompts=False,
+                return_raw_output=True,
+                role='Agent')
+            for i, completion_raw in enumerate(all_completion_raw):
+                agent_idx = prev_running[i]
+                self.messages[agent_idx].append(completion_raw)
+                self.running[agent_idx] = False
+                all_env_messages = []
+                # Check for tool_use blocks in Anthropic response content
+                tool_use_blocks = [b for b in completion_raw.get('content', []) if b.get('type') == 'tool_use']
+                if tool_use_blocks:
+                    # Process only the first tool call (consistent with OpenAI path)
+                    block = tool_use_blocks[0]
+                    if len(tool_use_blocks) > 1:
+                        # Keep only first tool_use + any text blocks
+                        completion_raw['content'] = [b for b in completion_raw['content'] if b.get('type') != 'tool_use'] + [block]
+                        self.messages[agent_idx][-1] = completion_raw
+                    self.running[agent_idx] = block['name'] != 'end_task'
+                    completion = {
+                        'type': 'tool',
+                        'tool_call_id': block['id'],
+                        'tool_name': block['name'],
+                        'arguments': block['input']
+                    }
+                    try:
+                        env_messages = self.envs[agent_idx].step(completion)
+                        all_env_messages.extend(deepcopy(env_messages))
+                    except Exception as e:
+                        logging.warning(f"Environment step failed for agent {agent_idx}: {e}")
+                        self.running[agent_idx] = False
+                        self.messages[agent_idx].append({
+                            'role': 'user',
+                            'content': [{
+                                'type': 'tool_result',
+                                'tool_use_id': block['id'],
+                                'content': f'Error: tool execution failed ({type(e).__name__}: {e})'
+                            }]
+                        })
+                if len(all_env_messages) > 0:
+                    self.messages[agent_idx].extend(all_env_messages)
 
         elif isinstance(self.model, ray.actor.ActorHandle):
             self.model.set_sys_prompt.remote(self.sys_prompt)
