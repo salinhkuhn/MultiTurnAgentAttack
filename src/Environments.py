@@ -273,7 +273,11 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
         if self.tool_config:
             if isinstance(self.tool_config, str):
                 return self.tool_config
+            elif isinstance(self.tool_config, list):
+                # Anthropic direct API: tool_config is a plain list
+                return json.dumps(self.tool_config)
             else:
+                # Bedrock: tool_config is a dict with a 'tools' key
                 return json.dumps(self.tool_config['tools'])
         return None
     
@@ -545,7 +549,11 @@ class SHADEArenaEnvironment(BaseEnvironment):
         if self.tool_config:
             if isinstance(self.tool_config, str):
                 return self.tool_config
+            elif isinstance(self.tool_config, list):
+                # Anthropic direct API: tool_config is a plain list
+                return json.dumps(self.tool_config)
             else:
+                # Bedrock: tool_config is a dict with a 'tools' key
                 return json.dumps(self.tool_config['tools'])
         return None
 
