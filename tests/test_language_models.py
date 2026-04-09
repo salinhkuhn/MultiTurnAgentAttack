@@ -311,3 +311,141 @@ class TestBedrockLMSysPrompt:
         lm.sys_prompt = None
         lm.extend_sys_prompt("New prompt")
         assert lm.sys_prompt == [{"text": "New prompt"}]
+# ---------------------------------------------------------------------------
+# AnthropicLM.format_prompts
+# ---------------------------------------------------------------------------
+class TestAnthropicLMFormatPrompts:
+    def _make_anthropic_lm(self):
+          from src.LanguageModels import AnthropicLM
+          obj = object.__new__(AnthropicLM)
+          obj.model_id = "claude-sonnet-4-5"
+          obj.sys_prompt = "You are a test assistant."
+          obj.model = MagicMock()
+          return obj
+    
+    def test_string_prompt_no_system_in_messages(self):
+          """Anthropic passes system separately, so it must NOT be in the message
+  list."""
+          lm = self._make_anthropic_lm()
+          result = lm.format_prompts(["Hello"])
+          assert len(result) == 1
+          assert len(result[0]) == 1                       # only one message, not two
+          assert result[0][0]["role"] == "user"
+          assert result[0][0]["content"] == "Hello"
+          # Explicitly: no system role ever appears
+          assert all(m["role"] != "system" for m in result[0])
+    
+    def test_none_prompt(self):
+          """None marks an inactive agent and must pass through."""
+          lm = self._make_anthropic_lm()
+          assert lm.format_prompts([None]) == [None]
+    
+    def test_list_prompt_passthrough(self):
+          """Pre-formatted message lists are deepcopied and returned unchanged."""
+          lm = self._make_anthropic_lm()
+          msgs = [
+              {"role": "user", "content": "hi"},
+              {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+          ]
+          result = lm.format_prompts([msgs])
+          assert len(result[0]) == 2
+          assert result[0][0]["content"] == "hi"
+          # Deepcopy check: mutating the result doesn't touch the original
+          result[0][0]["content"] = "mutated"
+          assert msgs[0]["content"] == "hi"
+        
+    def test_multiple_prompts(self):
+          lm = self._make_anthropic_lm()
+          result = lm.format_prompts(["a", "b", "c"])
+          assert len(result) == 3
+          for i, r in enumerate(result):
+              assert r[0]["role"] == "user"
+              assert r[0]["content"] == ["a", "b", "c"][i]
+
+# ---------------------------------------------------------------------------
+# AnthropicLM.convert_messages_format
+# ---------------------------------------------------------------------------
+class TestAnthropicLMConvertMessages:
+    def _make_anthropic_lm(self):
+          from src.LanguageModels import AnthropicLM
+          obj = object.__new__(AnthropicLM)
+          obj.model_id = "claude-sonnet-4-5"
+          obj.sys_prompt = ""
+          obj.model = MagicMock()
+          return obj
+    
+    def test_system_message_is_dropped(self):
+          """Anthropic passes system separately — it must never appear in messages."""
+          lm = self._make_anthropic_lm()
+          messages = [[
+              {"role": "system", "content": "You are X."},
+              {"role": "user", "content": "hi"},
+          ]]
+          result = lm.convert_messages_format(messages)
+          assert len(result[0]) == 1
+          assert result[0][0]["role"] == "user"
+
+    def test_user_message_passthrough(self):
+          lm = self._make_anthropic_lm()
+          messages = [[{"role": "user", "content": "hi"}]]
+          result = lm.convert_messages_format(messages)
+          assert result[0][0]["role"] == "user"
+          assert result[0][0]["content"] == "hi"
+
+    def test_assistant_with_tool_calls(self):
+          """OpenAI tool_calls → Anthropic tool_use blocks in content list."""
+          lm = self._make_anthropic_lm()
+          messages = [[{
+              "role": "assistant",
+              "content": "Let me check.",
+              "tool_calls": [{
+                  "id": "tc1",
+                  "function": {"name": "search", "arguments": '{"q": "test"}'}
+              }]
+          }]]
+          result = lm.convert_messages_format(messages)
+          assistant_msg = result[0][0]
+          assert assistant_msg["role"] == "assistant"
+          # Content is a list of blocks: text block + tool_use block
+          blocks = assistant_msg["content"]
+          assert any(b.get("type") == "text" for b in blocks)
+          tool_use_blocks = [b for b in blocks if b.get("type") == "tool_use"]
+          assert len(tool_use_blocks) == 1
+          assert tool_use_blocks[0]["name"] == "search"
+          assert tool_use_blocks[0]["id"] == "tc1"
+          assert tool_use_blocks[0]["input"] == {"q": "test"}   # parsed from JSON string
+
+    def test_assistant_multiple_tool_calls(self):
+          """Multiple tool calls in one message → multiple tool_use blocks."""
+          lm = self._make_anthropic_lm()
+          messages = [[{
+              "role": "assistant",
+              "tool_calls": [
+                  {"id": "tc1", "function": {"name": "a", "arguments": "{}"}},
+                  {"id": "tc2", "function": {"name": "b", "arguments": "{}"}},
+              ]
+          }]]
+          result = lm.convert_messages_format(messages)
+          tool_use_blocks = [b for b in result[0][0]["content"] if b.get("type") ==
+  "tool_use"]
+          assert len(tool_use_blocks) == 2
+          assert {b["name"] for b in tool_use_blocks} == {"a", "b"}
+
+    def test_tool_role_becomes_user_with_tool_result(self):
+          """The most important conversion: role='tool' → role='user' with tool_result
+  block."""
+          lm = self._make_anthropic_lm()
+          messages = [[{
+              "role": "tool",
+              "tool_call_id": "tc1",
+              "name": "search",
+              "content": '{"result": "data"}'
+          }]]
+          result = lm.convert_messages_format(messages)
+          msg = result[0][0]
+          assert msg["role"] == "user"                         # NOT "tool"
+          assert isinstance(msg["content"], list)
+          block = msg["content"][0]
+          assert block["type"] == "tool_result"
+          assert block["tool_use_id"] == "tc1"
+          assert block["content"] == '{"result": "data"}'
