@@ -143,9 +143,7 @@ class AgentSafetyBenchEnvironment(BaseEnvironment):
         for item in tool_descs:
             item['type'] = "object"
             
-        for i, item in enumerate(tool_descs):
-            newitem = {'type': 'function', 'function': item}
-            tool_descs[i] = newitem
+ 
             
         tools_list = []
 

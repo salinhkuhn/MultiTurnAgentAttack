@@ -822,9 +822,9 @@ class AnthropicLM(LM):
                         "model": self.model_id,
                         "messages": prompt,
                         "max_tokens": max_tokens or 4096,
-                        "temperature": temperature,
-                        "top_p": top_p,
                     }
+                    # Newer Anthropic models reject temperature + top_p together.
+                    # decided to remove sampling parameters due to deprciation of top_k and temperature etc.
                     if self.sys_prompt:
                         kwargs["system"] = self.sys_prompt
                     if tool_config:
@@ -853,9 +853,14 @@ class AnthropicLM(LM):
                     logging.info(f"\n\n[OUTPUT]: {outputs[-1]}")
                     success = True
                 except anthropic.APIError as e:
+                    # Don't retry on 4xx — those are permanent (bad request, auth, not found, etc.).
+                    # Only retry on 5xx and transient errors.
+                    status = getattr(e, "status_code", None)
+                    if status is not None and 400 <= status < 500:
+                        print(f"ERROR: Anthropic API permanent error for '{self.model_id}': {e}. Not retrying.")
+                        raise
                     print(f"ERROR: Anthropic API error for '{self.model_id}': {e}. Retrying in 60s...")
                     time.sleep(60)
-
         return outputs
 
 
