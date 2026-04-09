@@ -18,3 +18,9 @@ Baseline/defense_pipeline_configs.yaml
 distill_defense/defense_pipeline_configs.yaml
 venv/
 .vscode/
+
+# Private research planning documents — never publish
+experiment-docs/research-plan.md
+experiment-docs/research-plan-detailed.md
+README_skills_idea.md
+README_walkthrough.md
